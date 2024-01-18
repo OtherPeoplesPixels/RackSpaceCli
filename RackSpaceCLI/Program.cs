@@ -150,9 +150,9 @@ public class Program
                 Console.WriteLine(json);
             }
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            Console.WriteLine(e);
+            Console.WriteLine(ex);
             throw;
         }
     }
@@ -194,9 +194,9 @@ public class Program
             var xDoc = XDocument.Parse(content);
             return JsonConvert.SerializeXNode(xDoc.Root, Formatting.Indented, true);
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            Console.WriteLine(e);
+            Console.WriteLine(ex);
             throw;
         }
     }
@@ -270,9 +270,9 @@ public class Program
 
             Console.WriteLine(_domains.Count);
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            Console.WriteLine(e);
+            Console.WriteLine(ex);
             throw;
         }
     }
@@ -295,12 +295,10 @@ public class Program
         }
         catch (RegexMatchTimeoutException ex)
         {
-            Console.WriteLine('1');
             return false;
         }
         catch (ArgumentException ex)
         {
-            Console.WriteLine('2');
             return false;
         }
 
@@ -312,7 +310,6 @@ public class Program
         }
         catch (RegexMatchTimeoutException ex)
         {
-            Console.WriteLine('3');
             return false;
         }
     }
