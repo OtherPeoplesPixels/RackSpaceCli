@@ -10,7 +10,7 @@ namespace RackSpaceCLI;
 // ** These are the rate limits RackSpace imposes on clients **
 // Operation Category	Request Limit
 //     GET	                                    60 per minute
-//     PUT, POST, DELETE	                    30 per minute
+//     PUT, POST, DELETE (mailboxes)	        30 per minute
 //     POST, PUT, DELETE on a domain	        2 per minute
 //     POST, DELETE on alternate domains	    2 per minute
 // Enabling public folders for a domain	1 per   5 minutes
@@ -18,10 +18,9 @@ namespace RackSpaceCLI;
 // Therefore, to mitigate 403 codes returning from the API, a wait is placed on GET and DELETE operations and a
 // query limit of 30 is places on GET requests
 
-// Delete a single mailbox
+// Delete group of mailbox
 // Delete a single domain
 // Delete group of domains from csv
-// Delete group of mailboxes from csv
 
 public class Program
 {
@@ -38,7 +37,7 @@ public class Program
         ReadCsv();
         try
         {
-            const int batchSize = 200;
+            const int batchSize = 59;
             const int delayTime = 60_000; // 60 seconds
 
             for (var i = 0; i < _domains.Count; i += batchSize)
@@ -49,9 +48,8 @@ public class Program
                 {
                     var response = await Client(domain, Method.GET);
                     using var streamReader = new StreamReader(response.GetResponseStream());
-                    var json = ReaderXmlContentReturnJson(streamReader);
-                    var validDomains = GetValidDomains(json);
-                    Console.WriteLine($"Json: {json}");
+                    var content = await streamReader.ReadToEndAsync();
+                    Console.WriteLine( JToken.Parse(content).ToString(Formatting.Indented));
                 }
 
                 if (i + batchSize >= _domains.Count) continue;
@@ -82,8 +80,8 @@ public class Program
         
         try
         {
-            var batchSize = 3;
-            var delayTime = 60_000; //60 seconds
+            const int batchSize = 3;
+            const int delayTime = 60_000; //60 seconds
             for (var i = 0; i < _domains.Count; i += batchSize)
             {
                 var currentBatch = _domains.Skip(i).Take(batchSize);
@@ -92,8 +90,7 @@ public class Program
                     var response = await Client(domain, Method.DELETE);
                     using var reader = new StreamReader(response.GetResponseStream());
                     var content = await reader.ReadToEndAsync();
-                    var json = GetValidDomains(content);
-                    Console.WriteLine($"Json: {json}");
+                    Console.WriteLine(JToken.Parse(content).ToString(Formatting.Indented));
                     
                 }
                 if (i + batchSize >= _domains.Count) continue;
@@ -142,11 +139,11 @@ public class Program
             return method switch
             {
                 Method.GET => await rs.Get($"customers/all/domains/{domain}",
-                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"),
+                    "application/json"),
                 Method.POST => await rs.Post($"customers/all/domains/{domain}", data,
-                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"),
+                    "application/json"),
                 Method.DELETE => await rs.Delete($"customers/all/domains/{domain}",
-                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"),
+                    "application/json"),
                 _ => throw new Exception("Invalid method passed")
             };
         }
@@ -176,7 +173,7 @@ public class Program
     {
         var jsonObject = JObject.Parse(jsonData);
 
-        if (jsonObject.ContainsKey("@code"))
+        if (jsonObject.ContainsKey("code"))
         {
             return new List<string>();
         }
@@ -189,7 +186,7 @@ public class Program
 
         return jsonObject.Children()
             .OfType<JObject>()
-            .Where(domain => !domain.ContainsKey("@code"))
+            .Where(domain => !domain.ContainsKey("code"))
             .Select(domain => domain["name"].ToString())
             .ToList();
     }
