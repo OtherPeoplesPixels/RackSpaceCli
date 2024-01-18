@@ -1,0 +1,4 @@
+*.csv
+*.xml
+/RackSpaceCLI/obj/
+/RackSpaceCLI/bin/
