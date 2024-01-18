@@ -1,5 +1,8 @@
-﻿using System.Net;
+﻿using System.Globalization;
+using System.Net;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using CommandLine;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using nietras.SeparatedValues;
@@ -26,15 +29,44 @@ public class Program
 {
     private static readonly List<string> _domains = [];
 
-    public static async Task Main()
+    public static void Main(string[] args)
     {
-        await LookUpCustomerByDomain();
+        Parser.Default.ParseArguments<Options>(args)
+            .WithParsed(opt => RunWithOptions(opt))
+            .WithNotParsed(HandleParseError);
     }
 
 
-    private static async Task LookUpCustomerByDomain()
+    private static async Task RunWithOptions(Options options)
     {
-        ReadCsv();
+        if (!string.IsNullOrEmpty(options.FilePath))
+        {
+            Console.WriteLine(options.FilePath);
+            await LookUpCustomerByDomain(options.FilePath);
+        }
+        else if (!string.IsNullOrEmpty(options.Domain) && IsValidDomain(options.Domain))
+        {
+            Console.WriteLine(options.Domain);
+        }
+        else if (!string.IsNullOrEmpty(options.Mailbox) && IsValidEmail(options.Mailbox))
+        {
+            Console.WriteLine(options.Mailbox);
+        }
+        else
+        {
+            Console.WriteLine("No valid options were provided");
+            // Display help flags
+        }
+    }
+
+    private static void HandleParseError(IEnumerable<Error> errors)
+    {
+        Console.WriteLine($"ERRORS: {errors}");
+    }
+
+    private static async Task LookUpCustomerByDomain(string path)
+    {
+        ReadCsvFile(path);
         try
         {
             const int batchSize = 59;
@@ -49,7 +81,7 @@ public class Program
                     var response = await Client(domain, Method.GET);
                     using var streamReader = new StreamReader(response.GetResponseStream());
                     var content = await streamReader.ReadToEndAsync();
-                    Console.WriteLine( JToken.Parse(content).ToString(Formatting.Indented));
+                    Console.WriteLine(JToken.Parse(content).ToString(Formatting.Indented));
                 }
 
                 if (i + batchSize >= _domains.Count) continue;
@@ -77,7 +109,7 @@ public class Program
             Console.WriteLine(ex);
             throw;
         }
-        
+
         try
         {
             const int batchSize = 3;
@@ -91,13 +123,13 @@ public class Program
                     using var reader = new StreamReader(response.GetResponseStream());
                     var content = await reader.ReadToEndAsync();
                     Console.WriteLine(JToken.Parse(content).ToString(Formatting.Indented));
-                    
                 }
+
                 if (i + batchSize >= _domains.Count) continue;
                 Console.WriteLine("Pausing for 1 minute to satisfy rate limit...\r\n");
                 await Task.Delay(delayTime);
             }
-            
+
             ListDomains();
         }
         catch (Exception ex)
@@ -173,15 +205,9 @@ public class Program
     {
         var jsonObject = JObject.Parse(jsonData);
 
-        if (jsonObject.ContainsKey("code"))
-        {
-            return new List<string>();
-        }
+        if (jsonObject.ContainsKey("code")) return new List<string>();
 
-        if (jsonObject.ContainsKey("aliases"))
-        {
-            return new List<string> { jsonObject["name"].ToString() };
-        }
+        if (jsonObject.ContainsKey("aliases")) return new List<string> { jsonObject["name"].ToString() };
 
 
         return jsonObject.Children()
@@ -191,18 +217,41 @@ public class Program
             .ToList();
     }
 
-    private enum Method
-    {
-        GET,
-        POST,
-        DELETE
-    }
-
     private static void ListDomains()
     {
-        foreach (var domain in _domains)
+        foreach (var domain in _domains) Console.WriteLine($"Domain: {domain}");
+    }
+
+
+    private static void ReadCsvFile(string path)
+    {
+        try
         {
-            Console.WriteLine($"Domain: {domain}");
+            using var reader = Sep.Reader().FromFile(path);
+            _domains.Clear();
+
+            foreach (var row in reader)
+            {
+                var domain = row[0].ToString().Split('@');
+                _domains.Add(domain[1]);
+            }
+
+            Console.WriteLine($"Total domains read from file: {_domains.Count}");
+        }
+        catch (FileNotFoundException ex)
+        {
+            Console.Error.WriteLine($"The file \"{path}\" is not a valid file name or does not exist.\r\n" +
+                                    $"Please check for typos or the correct path");
+        }
+        catch (InvalidDataException ex)
+        {
+            Console.Error.WriteLine($"The file \"{path}\" is not in a valid CSV format.\r\n" +
+                                    "Check for missing commas or other anomalies within the file.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+            throw;
         }
     }
 
@@ -226,5 +275,69 @@ public class Program
             Console.WriteLine(e);
             throw;
         }
+    }
+
+    private static bool IsValidEmail(string email)
+    {
+        if (string.IsNullOrEmpty(email)) return false;
+
+        try
+        {
+            email = Regex.Replace(email, @"(@)(.+)$", DomainMapper, RegexOptions.None, TimeSpan.FromMilliseconds(200));
+
+            static string DomainMapper(Match match)
+            {
+                var idn = new IdnMapping();
+                var domainName = idn.GetAscii(match.Groups[2].Value);
+
+                return match.Groups[1].Value + domainName;
+            }
+        }
+        catch (RegexMatchTimeoutException ex)
+        {
+            Console.WriteLine('1');
+            return false;
+        }
+        catch (ArgumentException ex)
+        {
+            Console.WriteLine('2');
+            return false;
+        }
+
+        try
+        {
+            return Regex.IsMatch(email,
+                @"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+                RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(250));
+        }
+        catch (RegexMatchTimeoutException ex)
+        {
+            Console.WriteLine('3');
+            return false;
+        }
+    }
+
+    private static bool IsValidDomain(string domain)
+    {
+        if (string.IsNullOrWhiteSpace(domain))
+            return false;
+
+        try
+        {
+            return Regex.IsMatch(domain,
+                @"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$",
+                RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(250));
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return false;
+        }
+    }
+
+    private enum Method
+    {
+        GET,
+        POST,
+        DELETE
     }
 }
