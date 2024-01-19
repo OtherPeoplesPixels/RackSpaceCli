@@ -18,7 +18,7 @@ public class RestApiClient
         this.secretKey = secretKey;
     }
 
-    public async Task<HttpWebResponse> Get(string url, string format)
+    public HttpWebResponse Get(string url, string format)
     {
         try
         {
@@ -26,7 +26,7 @@ public class RestApiClient
             request.Method = "GET";
             SignMessage();
             AssignFormat(format);
-            return await GetResponseContentAsync();
+            return GetResponseContent();
         }
         catch (Exception e)
         {
@@ -35,24 +35,24 @@ public class RestApiClient
         }
     }
 
-    public async Task<HttpWebResponse> Post(string url, string data, string format)
+    public HttpWebResponse Post(string url, string data, string format)
     {
         request = (HttpWebRequest)WebRequest.Create(baseUrl + url);
         request.Method = "POST";
         SignMessage();
         AssignFormat(format);
         SendFormData(data);
-        return await GetResponseContentAsync();
+        return GetResponseContent();
     }
 
 
-    public async Task<HttpWebResponse> Delete(string url, string format)
+    public HttpWebResponse Delete(string url, string format)
     {
         request = (HttpWebRequest)WebRequest.Create(baseUrl + url);
         request.Method = "DELETE";
         SignMessage();
         AssignFormat(format);
-        return await GetResponseContentAsync();
+        return GetResponseContent();
     }
 
     private void SendFormData(string data)
@@ -66,11 +66,11 @@ public class RestApiClient
         requestStream.Close();
     }
 
-    private async Task<HttpWebResponse> GetResponseContentAsync()
+    private HttpWebResponse GetResponseContent()
     {
         try
         {
-            return (HttpWebResponse)await request.GetResponseAsync();
+            return (HttpWebResponse)request.GetResponse();
         }
         catch (WebException e)
         {

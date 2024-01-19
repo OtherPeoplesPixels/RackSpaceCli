@@ -37,12 +37,12 @@ public class Program
     }
 
 
-    private static async Task RunWithOptions(Options options)
+    private static void RunWithOptions(Options options)
     {
         if (!string.IsNullOrEmpty(options.FilePath))
         {
             Console.WriteLine(options.FilePath);
-            await LookUpCustomerByDomain(options.FilePath);
+            LookUpCustomerByDomain(options.FilePath);
         }
         else if (!string.IsNullOrEmpty(options.Domain) && IsValidDomain(options.Domain))
         {
@@ -64,7 +64,7 @@ public class Program
         Console.WriteLine($"ERRORS: {errors}");
     }
 
-    private static async Task LookUpCustomerByDomain(string path)
+    private static void LookUpCustomerByDomain(string path)
     {
         ReadCsvFile(path);
         try
@@ -78,15 +78,15 @@ public class Program
 
                 foreach (var domain in currentBatch)
                 {
-                    var response = await Client(domain, Method.GET);
+                    var response = Client(domain, Method.GET);
                     using var streamReader = new StreamReader(response.GetResponseStream());
-                    var content = await streamReader.ReadToEndAsync();
+                    var content = streamReader.ReadToEnd();
                     Console.WriteLine(JToken.Parse(content).ToString(Formatting.Indented));
                 }
 
                 if (i + batchSize >= _domains.Count) continue;
                 Console.WriteLine("Pausing for 1 minute to satisfy rate limit...\r\n");
-                await Task.Delay(delayTime);
+                Thread.Sleep(delayTime);
             }
 
             ListDomains();
@@ -119,7 +119,7 @@ public class Program
                 var currentBatch = _domains.Skip(i).Take(batchSize);
                 foreach (var domain in currentBatch)
                 {
-                    var response = await Client(domain, Method.DELETE);
+                    var response = Client(domain, Method.DELETE);
                     using var reader = new StreamReader(response.GetResponseStream());
                     var content = await reader.ReadToEndAsync();
                     Console.WriteLine(JToken.Parse(content).ToString(Formatting.Indented));
@@ -138,30 +138,11 @@ public class Program
         }
     }
 
-    private static async Task LookupMailboxesByDomain(string domain)
-    {
-        try
-        {
-            var response = await Client(domain, Method.GET);
-
-            using (var stream = new StreamReader(response.GetResponseStream()))
-            {
-                var json = ReaderXmlContentReturnJson(stream);
-                Console.WriteLine(json);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(ex);
-            throw;
-        }
-    }
-
     private static void RemoveMailboxes(string domain)
     {
     }
 
-    private static async Task<HttpWebResponse> Client(string domain, Method method, string data = "")
+    private static HttpWebResponse Client(string domain, Method method, string data = "")
     {
         try
         {
@@ -170,11 +151,11 @@ public class Program
 
             return method switch
             {
-                Method.GET => await rs.Get($"customers/all/domains/{domain}",
+                Method.GET => rs.Get($"customers/all/domains/{domain}",
                     "application/json"),
-                Method.POST => await rs.Post($"customers/all/domains/{domain}", data,
+                Method.POST => rs.Post($"customers/all/domains/{domain}", data,
                     "application/json"),
-                Method.DELETE => await rs.Delete($"customers/all/domains/{domain}",
+                Method.DELETE => rs.Delete($"customers/all/domains/{domain}",
                     "application/json"),
                 _ => throw new Exception("Invalid method passed")
             };
