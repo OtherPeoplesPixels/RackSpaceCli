@@ -1,11 +1,10 @@
 ﻿using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
-using System.Xml.Linq;
 using CommandLine;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using nietras.SeparatedValues;
+
 using Formatting = Newtonsoft.Json.Formatting;
 
 namespace RackSpaceCLI;
@@ -28,6 +27,10 @@ namespace RackSpaceCLI;
 public class Program
 {
     private static readonly List<string> _domains = [];
+    private static readonly List<string> _validDomains = [];
+    private static readonly List<string> _invalidDomains = [];
+    private static readonly List<string> _domainsWithoutMailbox = [];
+    private static List<string> _mailBoxes = [];
 
     public static void Main(string[] args)
     {
@@ -81,6 +84,52 @@ public class Program
                     var response = Client(domain, Method.GET);
                     using var streamReader = new StreamReader(response.GetResponseStream());
                     var content = streamReader.ReadToEnd();
+                    ProcessDomains(content, domain);
+                    Console.WriteLine(JToken.Parse(content).ToString(Formatting.Indented));
+                }
+
+                if (i + batchSize >= _domains.Count) continue;
+                Console.WriteLine("Pausing for 1 minute to satisfy rate limit...\r\n");
+                Thread.Sleep(delayTime);
+            }
+            SyncMailboxesWithValidDomains();
+            DumpInvalidDomainsToCSV("Domains_without_email.csv", "Domains_not_found.csv");
+            MailboxDeletePrompt();
+            
+        }
+        catch (Exception ex)
+        {
+            throw new Exception("An error has occurred: " + ex.Message);
+        }
+    }
+
+    
+
+    
+    private static void RemoveDomain()
+    {
+        try
+        {
+            ListDomains();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+            throw;
+        }
+
+        try
+        {
+            const int batchSize = 3;
+            const int delayTime = 60_000; //60 seconds
+            for (var i = 0; i < _validDomains.Count; i += batchSize)
+            {
+                var currentBatch = _validDomains.Skip(i).Take(batchSize);
+                foreach (var domain in currentBatch)
+                {
+                    var response = Client(domain, Method.DELETE);
+                    using var reader = new StreamReader(response.GetResponseStream());
+                    var content =  reader.ReadToEnd();
                     Console.WriteLine(JToken.Parse(content).ToString(Formatting.Indented));
                 }
 
@@ -93,53 +142,68 @@ public class Program
         }
         catch (Exception ex)
         {
-            throw new Exception("An error has occurred: " + ex.Message);
-        }
-    }
-
-
-    private static async Task RemoveDomain()
-    {
-        try
-        {
-            ReadCsv();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(ex);
-            throw;
-        }
-
-        try
-        {
-            const int batchSize = 3;
-            const int delayTime = 60_000; //60 seconds
-            for (var i = 0; i < _domains.Count; i += batchSize)
-            {
-                var currentBatch = _domains.Skip(i).Take(batchSize);
-                foreach (var domain in currentBatch)
-                {
-                    var response = Client(domain, Method.DELETE);
-                    using var reader = new StreamReader(response.GetResponseStream());
-                    var content = await reader.ReadToEndAsync();
-                    Console.WriteLine(JToken.Parse(content).ToString(Formatting.Indented));
-                }
-
-                if (i + batchSize >= _domains.Count) continue;
-                Console.WriteLine("Pausing for 1 minute to satisfy rate limit...\r\n");
-                await Task.Delay(delayTime);
-            }
-
-            ListDomains();
-        }
-        catch (Exception ex)
-        {
             Console.WriteLine($"An error has occured: {ex.Message}");
         }
     }
 
-    private static void RemoveMailboxes(string domain)
+    private static void RemoveMailboxes()
     {
+        ListDomains();
+
+        try
+        {
+            var rs = new RestApiClient("https://api.emailsrvr.com/", "Db45bOTFnlsOzOoO0fbr",
+                "BpVIGvEneUVBFXUBt2xyRUay5dT0iygvw6XmkXCv");
+            const int batchSize = 29;
+            const int delayTime = 60_000; //60 seconds
+            
+            for (var i = 0; i < _validDomains.Count; i += batchSize)
+            {
+                var currentBatch = _mailBoxes.Skip(i).Take(batchSize);
+                foreach (var domain in currentBatch)
+                {
+                    // var response = Client(domain, Method.DELETE);
+                    var response = rs.Delete($"customers/all/domains/{domain.Split("@").Last()}/rs/mailboxes/{domain.Split("@").First()}",
+                        "application/json");
+                    using var reader = new StreamReader(response.GetResponseStream());
+                    var content =  reader.ReadToEnd();
+
+                    try
+                    {
+                        var data = JObject.Parse(content);
+
+                        if (data.ContainsKey("itemNotFoundFault"))
+                        {
+                            Console.WriteLine("Mailbox not found.");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Mailbox {domain} was successfully deleted.");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (string.IsNullOrEmpty(content))
+                        {
+                            Console.WriteLine($"Mailbox {domain} was successfully deleted.");
+                        }
+                        else
+                        {
+                            Console.WriteLine("Mailbox deletion failed: Error parsing JSON response. Details: " + ex.Message);
+                        }
+                    }
+                }
+
+                if (i + batchSize >= _domains.Count) continue;
+                Console.WriteLine("Pausing for 1 minute to satisfy rate limit...\r\n");
+                Thread.Sleep(delayTime);
+            }
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+            throw;
+        }
     }
 
     private static HttpWebResponse Client(string domain, Method method, string data = "")
@@ -166,41 +230,52 @@ public class Program
             throw;
         }
     }
+    
 
-    private static string ReaderXmlContentReturnJson(StreamReader reader)
+    private static void ProcessDomains(string json, string domain)
     {
-        try
+        var jsonObject = JObject.Parse(json);
+
+        if (jsonObject["unauthorizedFault"]?["code"] != null)
         {
-            var content = reader.ReadToEnd();
-            var xDoc = XDocument.Parse(content);
-            return JsonConvert.SerializeXNode(xDoc.Root, Formatting.Indented, true);
+            _invalidDomains.Add(domain);
         }
-        catch (Exception ex)
+        else if (jsonObject["itemNotFoundFault"]?["code"] != null)
         {
-            Console.WriteLine(ex);
-            throw;
+            _invalidDomains.Add(domain);
+        }
+        else if (jsonObject["rsEmailUsedStorage"] != null && (int)jsonObject["rsEmailUsedStorage"] == 0)
+        {
+            Console.WriteLine($"Domain has no email: {domain}");
+            _domainsWithoutMailbox.Add(domain);
+        }
+        else if (jsonObject["name"] != null && (int)jsonObject["rsEmailUsedStorage"] == 1)
+        {
+            _validDomains.Add(jsonObject["name"].ToString());
+            
         }
     }
 
-    private static List<string> GetValidDomains(string jsonData)
+    private static void SyncMailboxesWithValidDomains()
     {
-        var jsonObject = JObject.Parse(jsonData);
+        var accountDict = new Dictionary<string, string>();
+        _mailBoxes = _mailBoxes.Where(mb => _validDomains.Contains(mb.Split("@").Last())).ToList();
 
-        if (jsonObject.ContainsKey("code")) return new List<string>();
+        foreach (var mailBox in _mailBoxes)
+        {
+            Console.WriteLine(mailBox);
+            accountDict.Add(mailBox, mailBox.Split('@').Last());
+            
+        }
 
-        if (jsonObject.ContainsKey("aliases")) return new List<string> { jsonObject["name"].ToString() };
-
-
-        return jsonObject.Children()
-            .OfType<JObject>()
-            .Where(domain => !domain.ContainsKey("code"))
-            .Select(domain => domain["name"].ToString())
-            .ToList();
+        Console.WriteLine($"There are {_mailBoxes.Count} mailboxes to process.");
     }
+    
 
     private static void ListDomains()
     {
-        foreach (var domain in _domains) Console.WriteLine($"Domain: {domain}");
+        foreach (var domain in _validDomains) Console.WriteLine($"Domain: {domain}");
+        Console.WriteLine($"Total valid domains: {_validDomains.Count}");
     }
 
 
@@ -214,25 +289,35 @@ public class Program
             foreach (var row in reader)
             {
                 var domain = row[0].ToString().Split('@');
+                var mailbox = (row[0].ToString());
                 _domains.Add(domain[1]);
+                _mailBoxes.Add(mailbox);
             }
 
+            foreach (var mailBox in _mailBoxes)
+            {
+                Console.WriteLine(mailBox);
+            }
             Console.WriteLine($"Total domains read from file: {_domains.Count}");
         }
         catch (FileNotFoundException ex)
         {
-            Console.Error.WriteLine($"The file \"{path}\" is not a valid file name or does not exist.\r\n" +
-                                    $"Please check for typos or the correct path");
+            Console.Error.WriteLine($"The file \"{path}\" is not a valid file name or does not exist in the location specified.\r\n" +
+                                    $"Please check for typos in the filename or the correct path");
+            Environment.Exit(0);
         }
         catch (InvalidDataException ex)
         {
             Console.Error.WriteLine($"The file \"{path}\" is not in a valid CSV format.\r\n" +
                                     "Check for missing commas or other anomalies within the file.");
+            Environment.Exit(0);
         }
         catch (Exception ex)
         {
-            Console.WriteLine(ex);
-            throw;
+            Console.WriteLine($"An unexpected error has occurred, please contact the development team and provide them with the following information:\r\n"
+                + $"Error: {ex.Message}");
+            
+            Environment.Exit(0);
         }
     }
 
@@ -312,10 +397,139 @@ public class Program
         }
     }
 
+    private static void MailboxDeletePrompt()
+    {
+        Console.WriteLine("Do you want to delete the mailboxes associated with the listed domains? (y/n/a)");
+
+        while (true)
+        {
+            Console.Write("Enter your choice (y = yes, n = no, a = abort): ");
+            string userInput = Console.ReadLine().Trim().ToLower();
+
+            if (userInput == "y")
+            {
+                Console.WriteLine("Running the delete function...");
+                RemoveMailboxes();
+                break;
+            }
+            else if (userInput == "n")
+            {
+                Console.WriteLine("Operation cancelled.");
+                break;
+            }
+            else if (userInput == "a")
+            {
+                Console.WriteLine("Operation aborted.");
+                Environment.Exit(0); 
+            }
+            else
+            {
+                Console.WriteLine("Invalid input. Please enter 'y', 'n', or 'a'.");
+            }
+        }
+    }
+
+    private static void DomainDeletePrompt()
+    {
+        Console.WriteLine("Do you want to delete the domains that no longer have mailboxes? (y/n/a)");
+
+        while (true)
+        {
+            Console.Write("Enter your choice (y = yes, n = no, a = abort): ");
+            string userInput = Console.ReadLine().Trim().ToLower();
+
+            if (userInput == "y")
+            {
+                Console.WriteLine("Running the delete function...");
+                RemoveDomain();
+                break;
+            }
+            else if (userInput == "n")
+            {
+                Console.WriteLine("Operation cancelled.");
+                break;
+            }
+            else if (userInput == "a")
+            {
+                Console.WriteLine("Operation aborted.");
+                Environment.Exit(0); 
+            }
+            else
+            {
+                Console.WriteLine("Invalid input. Please enter 'y', 'n', or 'a'.");
+            }
+        }
+    }
+    
+    
+    private static void DumpInvalidDomainsToCSV(string pathToNoEmailFile, string pathToNoDomainFile)
+    {
+        using (var writer = new StreamWriter(pathToNoEmailFile, true))
+        {
+            
+            if (!File.Exists(pathToNoEmailFile))
+            {
+                writer.WriteLine("Domain,Value1,Value2"); 
+            }
+            
+            foreach (var domain in _domainsWithoutMailbox.Distinct())
+            {
+                if (!File.ReadLines(pathToNoEmailFile).Any(line => line.StartsWith(domain)))
+                {
+                    writer.WriteLine($"{domain},{DateTime.Now:MM/dd/yyyy},x"); 
+                }
+            }
+        }
+
+        using (var writer = new StreamWriter(pathToNoDomainFile, true))
+        {
+            if (!File.Exists(pathToNoDomainFile))
+            {
+                writer.WriteLine("Domain,Value1,Value2"); 
+            }
+
+            foreach (var domain in _invalidDomains)
+            {
+                if (!File.ReadLines(pathToNoDomainFile).Any(line => line.StartsWith(domain)))
+                {
+                    writer.WriteLine($"{domain},{DateTime.Now:MM/dd/yyyy},x");
+                }
+            }
+        }
+
+        var absolutePath = Path.GetFullPath(pathToNoEmailFile);
+        Console.WriteLine($"A Csv file has been created or updated at {absolutePath}");
+
+        foreach (var mailbox in _domainsWithoutMailbox)
+        {
+            Console.WriteLine($" no mail box: {mailbox}");
+        }
+
+        foreach (var domain in _invalidDomains)
+        {
+            Console.WriteLine("invalid: " + domain);
+        }
+        
+    }
     private enum Method
     {
         GET,
         POST,
         DELETE
+    }
+
+    private static void RemoveMB()
+    {
+        Console.WriteLine($"Removing mailboxes...");
+        Thread.Sleep(5_000);
+        DomainDeletePrompt();
+    }
+    
+    private static void RemoveDM()
+    {
+        Console.WriteLine($"Removing Domains...");
+        Thread.Sleep(5_000);
+        Console.WriteLine($"Domains deleted. All deleted domains have been logged to the file. ");
+        
     }
 }
