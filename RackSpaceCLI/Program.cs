@@ -100,7 +100,7 @@ public class Program
             }
             
             
-            DumpInvalidDomainsToCSV("Domains_without_email.csv", "Domains_not_found.csv");
+            DumpInvalidDomainsToCSV("Csv_files/Domains_without_email.csv", "Csv_files/Domains_not_found.csv");
             MailboxDeletePrompt();
             
         }
@@ -353,28 +353,7 @@ public class Program
             Environment.Exit(0);
         }
     }
-
-    private static void ReadCsv()
-    {
-        try
-        {
-            using var reader = Sep.Reader()
-                .FromFile("/Users/drew/RiderProjects/RackSpaceCLI/RackSpaceCLI/mail_domains.csv");
-            foreach (var row in reader)
-            {
-                var domain = row[0].ToString().Split('@');
-                // Console.WriteLine(domain[1]);
-                _domains.Add(domain[1]);
-            }
-
-            Console.WriteLine(_domains.Count);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(ex);
-            throw;
-        }
-    }
+    
 
     private static bool IsValidEmail(string email)
     {
@@ -497,6 +476,8 @@ public class Program
     
     private static void DumpInvalidDomainsToCSV(string pathToNoEmailFile, string pathToNoDomainFile)
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(pathToNoEmailFile));
+        Directory.CreateDirectory(Path.GetDirectoryName(pathToNoDomainFile));
         using (var writer = new StreamWriter(pathToNoEmailFile, true))
         {
             
@@ -550,19 +531,5 @@ public class Program
         POST,
         DELETE
     }
-
-    private static void RemoveMB()
-    {
-        Console.WriteLine($"Removing mailboxes...");
-        Thread.Sleep(5_000);
-        DomainDeletePrompt();
-    }
     
-    private static void RemoveDM()
-    {
-        Console.WriteLine($"Removing Domains...");
-        Thread.Sleep(5_000);
-        Console.WriteLine($"Domains deleted. All deleted domains have been logged to the file. ");
-        
-    }
 }

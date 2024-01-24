@@ -13,4 +13,8 @@
         <PackageReference Include="Sep" Version="0.4.0"/>
     </ItemGroup>
 
+    <ItemGroup>
+      <Folder Include="Csv_files\" />
+    </ItemGroup>
+
 </Project>
