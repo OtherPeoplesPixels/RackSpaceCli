@@ -93,6 +93,13 @@ public class Program
                 Thread.Sleep(delayTime);
             }
             SyncMailboxesWithValidDomains();
+            if (_mailBoxes.Count == 0)
+            {
+                DomainDeletePrompt();
+                return;
+            }
+            
+            
             DumpInvalidDomainsToCSV("Domains_without_email.csv", "Domains_not_found.csv");
             MailboxDeletePrompt();
             
@@ -108,29 +115,21 @@ public class Program
     
     private static void RemoveDomain()
     {
-        try
-        {
-            ListDomains();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(ex);
-            throw;
-        }
 
         try
         {
             const int batchSize = 3;
             const int delayTime = 60_000; //60 seconds
-            for (var i = 0; i < _validDomains.Count; i += batchSize)
+            for (var i = 0; i < _domainsWithoutMailbox.Count; i += batchSize)
             {
-                var currentBatch = _validDomains.Skip(i).Take(batchSize);
+                var currentBatch = _domains.Skip(i).Take(batchSize);
                 foreach (var domain in currentBatch)
                 {
                     var response = Client(domain, Method.DELETE);
                     using var reader = new StreamReader(response.GetResponseStream());
                     var content =  reader.ReadToEnd();
-                    Console.WriteLine(JToken.Parse(content).ToString(Formatting.Indented));
+                    ProcessDomainResponse(content, domain);
+                    
                 }
 
                 if (i + batchSize >= _domains.Count) continue;
@@ -138,18 +137,45 @@ public class Program
                 Thread.Sleep(delayTime);
             }
 
-            ListDomains();
+            Console.WriteLine($"All domains deleted.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"An error has occured: {ex.Message}");
+            Console.WriteLine($"An error has occurred: {ex.Message}");
+        }
+    }
+
+    private static void ProcessDomainResponse(string content, string domain)
+    {
+        try
+        {
+            var data = JObject.Parse(content);
+
+            if (data.ContainsKey("itemNotFoundFault"))
+            {
+                Console.WriteLine($"{domain} not found.");
+            }
+            else if(content == "" || string.IsNullOrEmpty(content))
+            {
+                Console.WriteLine($"{domain} was successfully deleted.");
+            }
+        }
+        catch (Exception ex)
+        {
+            if (string.IsNullOrEmpty(content))
+            {
+                Console.WriteLine($"Domain {domain} was successfully deleted.");
+            }
+            else
+            {
+                Console.WriteLine("Mailbox deletion failed: Error parsing JSON response. Details: " + ex.Message);
+            }
         }
     }
 
     private static void RemoveMailboxes()
     {
-        ListDomains();
-
+       
         try
         {
             var rs = new RestApiClient("https://api.emailsrvr.com/", "Db45bOTFnlsOzOoO0fbr",
@@ -162,47 +188,53 @@ public class Program
                 var currentBatch = _mailBoxes.Skip(i).Take(batchSize);
                 foreach (var domain in currentBatch)
                 {
-                    // var response = Client(domain, Method.DELETE);
                     var response = rs.Delete($"customers/all/domains/{domain.Split("@").Last()}/rs/mailboxes/{domain.Split("@").First()}",
                         "application/json");
                     using var reader = new StreamReader(response.GetResponseStream());
                     var content =  reader.ReadToEnd();
 
-                    try
-                    {
-                        var data = JObject.Parse(content);
-
-                        if (data.ContainsKey("itemNotFoundFault"))
-                        {
-                            Console.WriteLine("Mailbox not found.");
-                        }
-                        else
-                        {
-                            Console.WriteLine($"Mailbox {domain} was successfully deleted.");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        if (string.IsNullOrEmpty(content))
-                        {
-                            Console.WriteLine($"Mailbox {domain} was successfully deleted.");
-                        }
-                        else
-                        {
-                            Console.WriteLine("Mailbox deletion failed: Error parsing JSON response. Details: " + ex.Message);
-                        }
-                    }
+                    ParseMailResponse(content, domain);
                 }
 
                 if (i + batchSize >= _domains.Count) continue;
                 Console.WriteLine("Pausing for 1 minute to satisfy rate limit...\r\n");
                 Thread.Sleep(delayTime);
             }
+            
+            DomainDeletePrompt();
         }
         catch (Exception e)
         {
             Console.WriteLine(e);
             throw;
+        }
+    }
+
+    private static void ParseMailResponse(string content, string domain)
+    {
+        try
+        {
+            var data = JObject.Parse(content);
+
+            if (data.ContainsKey("itemNotFoundFault"))
+            {
+                Console.WriteLine("Mailbox not found.");
+            }
+            else
+            {
+                Console.WriteLine($"Mailbox {domain} was successfully deleted.");
+            }
+        }
+        catch (Exception ex)
+        {
+            if (string.IsNullOrEmpty(content))
+            {
+                Console.WriteLine($"Mailbox {domain} was successfully deleted.");
+            }
+            else
+            {
+                Console.WriteLine("Mailbox deletion failed: Error parsing JSON response. Details: " + ex.Message);
+            }
         }
     }
 
@@ -248,6 +280,7 @@ public class Program
         {
             Console.WriteLine($"Domain has no email: {domain}");
             _domainsWithoutMailbox.Add(domain);
+            
         }
         else if (jsonObject["name"] != null && (int)jsonObject["rsEmailUsedStorage"] == 1)
         {
