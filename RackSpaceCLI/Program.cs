@@ -175,11 +175,12 @@ public class Program
 
     private static void RemoveMailboxes()
     {
-       
+        var apiKey = Environment.GetEnvironmentVariable("API_KEY");
+        var secretKey = Environment.GetEnvironmentVariable("SECRET_KEY");
+        var baseUrl = "https://api.emailsrvr.com/";
         try
         {
-            var rs = new RestApiClient("https://api.emailsrvr.com/", "Db45bOTFnlsOzOoO0fbr",
-                "BpVIGvEneUVBFXUBt2xyRUay5dT0iygvw6XmkXCv");
+            var rs = new RestApiClient(baseUrl, apiKey, secretKey);
             const int batchSize = 29;
             const int delayTime = 60_000; //60 seconds
             

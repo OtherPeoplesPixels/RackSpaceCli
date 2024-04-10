@@ -2,3 +2,5 @@
 *.xml
 /RackSpaceCLI/obj/
 /RackSpaceCLI/bin/
+../.idea/
+.DS_Store
