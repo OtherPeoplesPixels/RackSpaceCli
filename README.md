@@ -5,6 +5,9 @@
 
 Make sure you have the latest version of the DotNet runtime installed on your system. You can download the runtime at [this link](https://dotnet.microsoft.com/en-us/download).
 
+Next, create appsettings.json file in the RackSpaceCLI/RackSpaceCLI/ directory. In 1Password there is an entry for appsettings.json that contains the api keys, copy the contents of that file and paste it in the blank appsettings.json file you created.
+
+
 Once the runtime is installed, place the RackSpaceCLI folder in an accessable location like the Desktop or Home folder. The applications folder has all the files it needs to run.
 There is no installation step, once the files are on your system you can start running the application.
 
